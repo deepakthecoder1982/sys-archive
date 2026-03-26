@@ -1,0 +1,742 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SYS_ARCHIVE // RESTRICTED</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600&family=Fira+Code:wght@400;500;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg: #030406; 
+            --term-green: #00ff41; --term-dim: #008f11;
+            --term-err: #ff2a2a; --warn: #ffb347;
+            --ink: #e2e2e2; --ink-dim: #888888;
+            --gold: #d4af37; 
+            --glass-bg: rgba(10, 15, 20, 0.45);
+            --glass-border: rgba(0, 255, 65, 0.2);
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            background-color: var(--bg); color: var(--term-green);
+            font-family: 'Fira Code', monospace; overflow: hidden; height: 100vh;
+        }
+
+        body::before {
+            content: ''; position: fixed; inset: 0;
+            background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,0.1) 2px, rgba(0,0,0,0.1) 4px);
+            pointer-events: none; z-index: 9999;
+        }
+
+        /* --- AUDIO CONTROLS --- */
+        #audio-controls {
+            position: fixed; top: 20px; right: 20px; z-index: 99999; display: none;
+        }
+        .audio-btn {
+            background: rgba(0, 255, 65, 0.1); border: 1px solid var(--term-green);
+            width: 45px; height: 45px; border-radius: 50%; cursor: pointer; 
+            display: flex; justify-content: center; align-items: center;
+            box-shadow: 0 0 15px rgba(0, 255, 65, 0.2); transition: all 0.3s;
+            backdrop-filter: blur(5px);
+        }
+        .audio-btn:hover { box-shadow: 0 0 25px var(--term-green); transform: scale(1.05); }
+        .audio-icon { width: 20px; height: 20px; fill: var(--term-green); }
+
+        /* --- PHASE 0 & 1: TERMINAL --- */
+        #pre-flight {
+            position: fixed; inset: 0; display: flex; flex-direction: column; 
+            justify-content: center; align-items: center; background: var(--bg); z-index: 200; gap: 2rem; transition: opacity 1s ease;
+        }
+        .btn-init {
+            background: transparent; border: 1px solid var(--term-green); color: var(--term-green);
+            font-family: 'Fira Code', monospace; padding: 12px 24px; cursor: pointer; font-size: 1rem; transition: 0.3s; border-radius: 4px;
+        }
+        .btn-init:hover { background: var(--term-green); color: var(--bg); box-shadow: 0 0 15px var(--term-green); }
+
+        #terminal-phase {
+            position: fixed; inset: 0; padding: 3rem; display: none; 
+            flex-direction: column; justify-content: center; max-width: 800px; margin: 0 auto; z-index: 100;
+        }
+        .sys-msg { opacity: 0; color: var(--term-green); font-size: 1rem; margin-bottom: 0.8rem; }
+        .sys-msg.err { color: var(--term-err); }
+        .sys-msg.warn { color: var(--warn); }
+        .visible { opacity: 1; transition: opacity 0.2s ease; }
+        .input-line { display: none; align-items: center; gap: 0.5rem; margin-top: 1rem; }
+        .input-line.active { display: flex; }
+        input[type="text"] {
+            background: transparent; border: none; color: var(--term-green);
+            font-family: 'Fira Code', monospace; font-size: 1.1rem; outline: none; width: 100%;
+        }
+
+        /* --- PHASE 2: FLOATING MATRIX UI --- */
+        #matrix-phase { 
+            display: none; width: 100vw; height: 100vh; opacity: 0; transition: opacity 1.5s ease; flex-direction: row; 
+        }
+        
+        .sidebar {
+            width: 280px; background: var(--glass-bg); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+            border: 1px solid var(--glass-border); border-radius: 16px; margin: 20px 0 20px 20px; padding: 2rem 1rem; 
+            display: flex; flex-direction: column; gap: 0.8rem; z-index: 10; box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3);
+        }
+        .sidebar-header { 
+            color: var(--term-dim); font-size: 0.8rem; letter-spacing: 2px; margin-bottom: 1.5rem; 
+            border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 1rem; text-align: center;
+        }
+        .node-btn {
+            background: transparent; border: 1px solid transparent; color: var(--ink-dim);
+            text-align: left; padding: 1rem; cursor: pointer; font-family: 'Fira Code', monospace; font-size: 0.85rem; transition: 0.3s; border-radius: 8px;
+        }
+        .node-btn:hover:not(.locked) { box-shadow: 0 0 10px rgba(0,255,65,0.2); color: var(--term-green); }
+        .node-btn.active { color: var(--term-green); border: 1px solid var(--term-dim); background: rgba(0, 255, 65, 0.05); }
+        .node-btn.locked { opacity: 0.3; cursor: not-allowed; pointer-events: none; }
+
+        .content-area { flex: 1; padding: 8vh 6vw; overflow-y: auto; position: relative; }
+        .node-content { display: none; max-width: 750px; margin: 0 auto; opacity: 0; transform: translateY(20px); transition: 0.6s ease; }
+        .node-content.active { display: block; opacity: 1; transform: translateY(0); padding-bottom: 100px; }
+
+        /* --- MOBILE RESPONSIVENESS --- */
+        @media (max-width: 768px) {
+            #matrix-phase { flex-direction: column; }
+            .sidebar { 
+                width: 92%; margin: 15px auto 0 auto; flex-direction: row; overflow-x: auto; 
+                padding: 10px; border-radius: 12px; gap: 10px;
+            }
+            .sidebar::-webkit-scrollbar { display: none; }
+            .sidebar-header { display: none; }
+            .node-btn { white-space: nowrap; padding: 0.6rem 1rem; text-align: center; }
+            .content-area { padding: 4vh 5vw; }
+            .glass-lock-container { width: 100%; padding: 1.5rem; }
+        }
+
+        /* --- LOCK & BLUR --- */
+        .blurred-text { filter: blur(10px); opacity: 0.3; user-select: none; pointer-events: none; transition: 2s ease; }
+        .blurred-text.unlocked { filter: blur(0); opacity: 1; user-select: text; pointer-events: auto; }
+        
+        .glass-lock-container {
+            position: absolute; top: 10%; left: 50%; transform: translateX(-50%);
+            background: var(--glass-bg); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+            border: 1px solid var(--glass-border); border-radius: 16px; padding: 2rem; text-align: center; width: 90%; max-width: 450px;
+            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3); z-index: 50; transition: 0.5s; cursor: pointer; overflow: hidden;
+        }
+        .glass-lock-container:hover { background: rgba(10, 15, 20, 0.6); border-color: rgba(0, 255, 65, 0.4); }
+        .glass-lock-container.expanded { cursor: default; padding: 2.5rem 2rem; }
+        .glass-lock-container.unlocked { opacity: 0; transform: translateX(-50%) translateY(-30px); pointer-events: none; }
+        
+        .svg-lock { width: 50px; height: 50px; fill: none; stroke: var(--term-green); stroke-width: 1.5; transition: 0.3s; }
+        .glass-lock-container:hover:not(.expanded) .svg-lock { transform: scale(1.1); }
+        .glass-lock-container.expanded .svg-lock { transform: scale(0.8); opacity: 0.5; margin-bottom: 1rem; }
+        
+        .lock-hidden-ui { max-height: 0; opacity: 0; transition: 0.5s; }
+        .glass-lock-container.expanded .lock-hidden-ui { max-height: 300px; opacity: 1; }
+        .lock-q { font-family: 'Inter', sans-serif; font-size: 1.05rem; color: var(--ink); margin-bottom: 1.5rem; line-height: 1.5; }
+        
+        .pass-input {
+            width: 100%; background: rgba(0,0,0,0.5); border: 1px solid var(--term-dim); border-radius: 4px;
+            color: var(--term-green); font-family: 'Fira Code', monospace; padding: 12px; text-align: center; font-size: 1.1rem; margin-bottom: 1rem; outline: none;
+        }
+        .pass-input:focus { box-shadow: 0 0 15px rgba(0, 255, 65, 0.2); border-color: var(--term-green); }
+        .unlock-btn {
+            background: transparent; border: 1px solid var(--term-green); color: var(--term-green); border-radius: 4px;
+            padding: 10px 20px; cursor: pointer; font-family: 'Fira Code', monospace; transition: 0.3s; width: 100%;
+        }
+        .unlock-btn:hover { background: var(--term-green); color: var(--bg); }
+        .msg-box { margin-top: 1rem; font-size: 0.85rem; min-height: 20px; font-family: 'Inter', sans-serif;}
+
+        /* --- TYPOGRAPHY --- */
+        .node-meta { color: var(--term-dim); font-size: 0.85rem; letter-spacing: 3px; margin-bottom: 1.5rem; }
+        .node-title { font-family: 'Inter', sans-serif; font-size: 2.5rem; color: var(--gold); margin-bottom: 2rem; font-weight: 300; letter-spacing: -1px;}
+        .node-body p { font-family: 'Inter', sans-serif; font-size: 1.15rem; color: var(--ink); line-height: 1.8; margin-bottom: 1.5rem; font-weight: 300; }
+        .pull-quote { border-left: 2px solid var(--term-dim); padding-left: 1.5rem; margin: 2rem 0; font-style: italic; color: var(--term-green); opacity: 0.85; font-size: 1.25rem; }
+        .next-btn {
+            display: none; margin-top: 2rem; background: transparent; border: 1px solid var(--term-dim); border-radius: 4px;
+            color: var(--term-green); padding: 12px 24px; cursor: pointer; font-family: 'Fira Code', monospace; transition: 0.3s;
+        }
+        .next-btn:hover { background: rgba(0, 255, 65, 0.1); border-color: var(--term-green); box-shadow: 0 0 10px rgba(0,255,65,0.2);}
+
+        /* --- PAYLOAD & IDENTITY REVEAL --- */
+        #payload-terminal { display: none; font-family: 'Fira Code', monospace; color: var(--term-green); margin-bottom: 2rem; min-height: 100px; }
+        #identity-lock-container { display: none; position: relative; top: 0; left: 0; transform: none; margin: 2rem auto; cursor: default; opacity: 0; transition: opacity 1s ease;}
+        #final-bday-content { display: none; opacity: 0; transition: opacity 2s ease; text-align: center; }
+        
+        .profile-pic {
+            width: 150px; height: 150px; border-radius: 50%; border: 2px solid var(--term-green);
+            box-shadow: 0 0 25px rgba(0,255,65,0.4); margin: 0 auto 1.5rem auto; display: block;
+            animation: pulse-glow 2s infinite; object-fit: cover;
+        }
+        @keyframes pulse-glow { 0%, 100% { box-shadow: 0 0 15px rgba(0,255,65,0.3); } 50% { box-shadow: 0 0 35px rgba(0,255,65,0.6); } }
+        
+        .bday-glitch { font-size: 3.5rem; color: var(--term-green); font-weight: 700; text-shadow: 0 0 20px rgba(0, 255, 65, 0.5); margin: 1rem 0; letter-spacing: 2px;}
+        .motivation-box { border: 1px solid var(--gold); padding: 2rem; margin-top: 2rem; background: rgba(212, 175, 55, 0.05); border-radius: 8px;}
+        .quote { font-family: 'Inter', sans-serif; font-style: italic; color: var(--gold); font-size: 1.2rem; margin-bottom: 1rem; }
+        .disclaimer-text { margin-top: 2rem; font-family: 'Inter', sans-serif; color: var(--ink-dim); font-size: 0.85rem; font-style: italic; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 1rem; }
+
+    </style>
+</head>
+<body>
+
+    <audio id="bg-music" loop><source src="music.mp3" type="audio/mpeg"></audio>
+    <audio id="typing-sound" loop><source src="typing.mp3" type="audio/mpeg"></audio>
+
+    <div id="audio-controls">
+        <button class="audio-btn" id="play-pause-btn" onclick="toggleAudio()" title="Play/Pause Music">
+            <svg id="icon-play" class="audio-icon" viewBox="0 0 24 24" style="display: none;"><path d="M8 5v14l11-7z"/></svg>
+            <svg id="icon-pause" class="audio-icon" viewBox="0 0 24 24"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>
+        </button>
+    </div>
+
+    <div id="pre-flight">
+        <div style="color: var(--term-dim); font-size: 0.8rem; letter-spacing: 4px; margin-bottom: -1rem;">SYS_ARCHIVE</div>
+        <div class="pre-text" style="text-align: center;">
+            <p>For optimal immersion:</p><br>
+            <p>1. Connect <span style="color: var(--term-green); font-weight:bold;">Headphones</span>.</p>
+            <p>2. Press <span style="color: var(--term-green); font-weight:bold;">F11</span> for Fullscreen.</p>
+        </div>
+        <button class="btn-init" onclick="initSystem()">[ INITIALIZE ]</button>
+    </div>
+
+    <div id="terminal-phase">
+        <div id="term-output"></div>
+        <div class="input-line" id="auth-input-container">
+            <span style="color: var(--term-green);">guest@sys_core:~$</span>
+            <input type="text" id="auth-input" autocomplete="off" spellcheck="false">
+        </div>
+    </div>
+
+    <div id="matrix-phase">
+        <div class="sidebar">
+            <div class="sidebar-header">SYS_ARCHIVE // INDEX</div>
+            <button class="node-btn active" data-target="node-1">> [01] The Builder</button>
+            <button class="node-btn locked" data-target="node-2">> [02] The Discipline</button>
+            <button class="node-btn locked" data-target="node-3">> [03] The Anchor</button>
+            <button class="node-btn locked" data-target="node-4">> [04] The Vision</button>
+            <button class="node-btn locked" data-target="node-5" style="color: var(--gold);">> [05] PAYLOAD</button>
+        </div>
+
+        <div class="content-area">
+            
+            <div class="node-content active" id="node-1">
+                <div class="glass-lock-container" id="overlay-1" onclick="expandLock(1)">
+                    <svg class="svg-lock" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
+                    <div class="lock-hidden-ui">
+                        <div class="lock-q">To master the machine, you do not just observe. You break it down to its core. What is the act of taking a system apart?</div>
+                        <input type="text" class="pass-input" id="pass-1" placeholder="Enter keyword..." onclick="event.stopPropagation()">
+                        <button class="unlock-btn" onclick="checkPass(1); event.stopPropagation();">DECRYPT</button>
+                        <div class="msg-box" id="msg-1"></div>
+                    </div>
+                </div>
+
+                <div class="blurred-text" id="text-1">
+                    <div class="node-meta">LOG 01 // ARCHITECTURE</div>
+                    <div class="node-title">The Builder</div>
+                    <div class="node-body">
+                        <p>From the beginning, you refused to live on the surface. You didn't just want to use technology; you wanted to uncover the pulse beneath it.</p>
+                        <p>You learned by dismantling the world around you. When a system failed, you didn't look away or wait for someone else. You sat in the dark, mapped the broken pieces, and rebuilt them from scratch.</p>
+                        <div class="pull-quote">"Security and privacy are not just features. They are the sacred trust between the creator and the user."</div>
+                        <p>This forged you into a brilliant backend developer. When a new coding language or framework appears, you don't memorize it. You wrestle with it until the unknown surrenders. You are a master at turning chaos into logic.</p>
+                    </div>
+                    <button class="next-btn" id="next-1" onclick="unlockNext(2)">Proceed to Next Log -></button>
+                </div>
+            </div>
+
+            <div class="node-content" id="node-2">
+                <div class="glass-lock-container" id="overlay-2" onclick="expandLock(2)">
+                    <svg class="svg-lock" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
+                    <div class="lock-hidden-ui">
+                        <div class="lock-q">True strength is forged in the crucible of consistency. To transform yourself, what soft weakness did you willingly sacrifice?</div>
+                        <input type="text" class="pass-input" id="pass-2" placeholder="Enter keyword..." onclick="event.stopPropagation()">
+                        <button class="unlock-btn" onclick="checkPass(2); event.stopPropagation();">DECRYPT</button>
+                        <div class="msg-box" id="msg-2"></div>
+                    </div>
+                </div>
+
+                <div class="blurred-text" id="text-2">
+                    <div class="node-meta">LOG 02 // COMMITMENT</div>
+                    <div class="node-title">The Discipline</div>
+                    <div class="node-body">
+                        <p>Your curiosity never stopped at a glowing screen. You explored the friction of the real world. But the greatest proof of your willpower is the way you reshaped your own life.</p>
+                        <p>You completely transformed your physical health through absolute, unwavering discipline. You stripped away comfort and replaced it with a promise. This proved a deep, undeniable truth about you: when you decide a goal matters, you do not stop until it is yours.</p>
+                        <p>You carry this incredible weight into your personal life as well. You do not make emotional promises lightly. You build a stable, unbreakable foundation before you invite anyone inside. You are a sanctuary of reliability.</p>
+                    </div>
+                    <button class="next-btn" id="next-2" onclick="unlockNext(3)">Proceed to Next Log -></button>
+                </div>
+            </div>
+
+            <div class="node-content" id="node-3">
+                <div class="glass-lock-container" id="overlay-3" onclick="expandLock(3)">
+                    <svg class="svg-lock" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
+                    <div class="lock-hidden-ui">
+                        <div class="lock-q">When the path grows dark for others, you become their guide. What invisible armor do you give those who doubt their own worth?</div>
+                        <input type="text" class="pass-input" id="pass-3" placeholder="Enter keyword..." onclick="event.stopPropagation()">
+                        <button class="unlock-btn" onclick="checkPass(3); event.stopPropagation();">DECRYPT</button>
+                        <div class="msg-box" id="msg-3"></div>
+                    </div>
+                </div>
+
+                <div class="blurred-text" id="text-3">
+                    <div class="node-meta">LOG 03 // MENTORSHIP</div>
+                    <div class="node-title">The Anchor</div>
+                    <div class="node-body">
+                        <p>Stepping up to teach was an unfamiliar battlefield. Translating complex code into human emotion was a totally different kind of architecture. But instead of retreating, you adapted.</p>
+                        <p>You became a guide who truly listens. If a session requires more time, you simply extend it. But far beyond teaching code, you became an emotional anchor. You breathed confidence into those who were suffocating in self-doubt. You prepared them to walk into rooms they felt entirely unqualified to enter.</p>
+                        <div class="pull-quote">"You never kept score. You never asked for applause. You just elevated those around you."</div>
+                        <p>Because of you, people achieved the impossible. Even people older than you pause to seek your wisdom, recognizing a maturity and depth that is incredibly rare to find.</p>
+                    </div>
+                    <button class="next-btn" id="next-3" onclick="unlockNext(4)">Proceed to Next Log -></button>
+                </div>
+            </div>
+
+            <div class="node-content" id="node-4">
+                <div class="glass-lock-container" id="overlay-4" onclick="expandLock(4)">
+                    <svg class="svg-lock" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
+                    <div class="lock-hidden-ui">
+                        <div class="lock-q">You abandoned the safe, conventional path because survival is not enough. What deeper truth are you searching for?</div>
+                        <input type="text" class="pass-input" id="pass-4" placeholder="Enter keyword..." onclick="event.stopPropagation()">
+                        <button class="unlock-btn" onclick="checkPass(4); event.stopPropagation();">DECRYPT</button>
+                        <div class="msg-box" id="msg-4"></div>
+                    </div>
+                </div>
+
+                <div class="blurred-text" id="text-4">
+                    <div class="node-meta">LOG 04 // EVOLUTION</div>
+                    <div class="node-title">Friction & Vision</div>
+                    <div class="node-body">
+                        <p>Your journey has not been a silent one. You have faced the harsh friction of criticism, the toxic trap of comparison, and moments of heavy self-doubt. Sometimes the world's loud expectations violently clashed with your quiet ambition.</p>
+                        <p>But those moments did not break you—they became the catalyst for your evolution. Having found success early, you made a fearless choice: you abandoned the "normal," safe path. Comfort is a cage to you. You demand meaning.</p>
+                        <p>You hold a massive, paradigm-shifting vision. You want to build a platform that rescues students from the crushing pressure of academic grades. You want to ignite their actual passions. You know that if we guide young minds correctly, we can literally change the future of society.</p>
+                    </div>
+                    <button class="next-btn" id="next-4" onclick="unlockNext(5)" style="color:var(--gold); border-color:var(--gold);">Execute Final Payload -></button>
+                </div>
+            </div>
+
+            <div class="node-content" id="node-5">
+                <div class="glass-lock-container" id="overlay-5" onclick="expandLock(5)">
+                    <svg class="svg-lock" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
+                    <div class="lock-hidden-ui">
+                        <div class="lock-q">The system detects feelings of stagnation. But a foundation takes time to cure. You are not falling behind. What are you doing?</div>
+                        <input type="text" class="pass-input" id="pass-5" placeholder="Enter keyword..." onclick="event.stopPropagation()">
+                        <button class="unlock-btn" onclick="checkPass(5); event.stopPropagation();">DECRYPT</button>
+                        <div class="msg-box" id="msg-5"></div>
+                    </div>
+                </div>
+
+                <div class="blurred-text" id="text-5">
+                    
+                    <div id="payload-terminal"></div>
+
+                    <div class="glass-lock-container expanded" id="identity-lock-container">
+                        <div id="id-step-1">
+                            <div class="lock-q" style="color: var(--gold);">FINAL SECURITY CHECK: VERIFYING CREATOR ALIAS.</div>
+                            <div class="lock-q" style="font-size: 0.9rem;">Enter the name of the online Image compressor tool you built:</div>
+                            <input type="text" class="pass-input" id="id-pass-1" placeholder="Enter tool name...">
+                            <button class="unlock-btn" onclick="checkIdentity(1)">VERIFY</button>
+                            <div class="msg-box" id="id-msg-1"></div>
+                        </div>
+
+                        <div id="id-step-2" style="display: none;">
+                            <div class="lock-q" style="color: var(--term-green);">ALIAS VERIFIED.</div>
+                            <div class="lock-q" style="font-size: 0.9rem;">Visual clearance required. Enter the cross-platform clipboard tool you co-founded:</div>
+                            <input type="text" class="pass-input" id="id-pass-2" placeholder="Enter tool name...">
+                            <button class="unlock-btn" onclick="checkIdentity(2)">DECRYPT IDENTITY</button>
+                            <div class="msg-box" id="id-msg-2"></div>
+                        </div>
+                    </div>
+
+                    <div id="final-bday-content">
+                        <img id="github-pic" src="" alt="Creator" class="profile-pic">
+                        
+                        <div class="node-body" style="margin-top: 2rem;">
+                            <p style="font-size: 1.8rem; color: #fff; font-weight: 600;">You are not lost.</p>
+                            <p style="font-size: 1.8rem; color: #fff; font-weight: 600;">You are preparing.</p>
+                            <br>
+                            <p>Every broken code you salvaged, every sacrifice you silently endured, every soul you lifted up when they were shattered—these were not random detours. They are the iron bricks of your empire.</p>
+                            <p>You built an entire world to motivate me when I was at my lowest. Now, the signal bounces back to remind you of your own immeasurable power.</p>
+                        </div>
+
+                        <div class="bday-glitch" id="bday-name">HAPPIEST BIRTHDAY</div>
+
+                        <div class="motivation-box">
+                            <div class="quote">"A system is only as strong as its foundation. And yours is unbreakable."</div>
+                            <div class="quote">"You don't just write code; you forge reality. Trust the magnificent timing of your own architecture."</div>
+                            
+                            <div style="margin-top: 2rem; font-family: 'Fira Code', monospace; color: var(--term-green); font-size: 0.95rem;">
+                                Keep building. Keep breaking. Keep moving forward.<br>
+                                — Someone who firmly believes in where this leads.
+                            </div>
+
+                            <div class="disclaimer-text">
+                                P.S. As a path-shower, I can only observe the greatness I see from the outside. If I assumed too much or misunderstood the nuances of your architecture, forgive the bugs in my logic. I can't define your entire journey—I just wanted to hold up a mirror so you could see how epic it truly is.
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <script>
+        // ==========================================
+        // 🛑 IMPORTANT: FILL IN HIS DETAILS HERE 🛑
+        // ==========================================
+        const HIS_NAME = "Gitesh"; // Replace with his actual name
+        const FORM_TOOL = "compressimagefree"; // Replace with the form tool answer (lowercase)
+        const CLIPBOARD_TOOL = "secureclip"; // Replace with the clipboard tool answer (lowercase)
+        const GITHUB_PIC_URL = "https://avatars.githubusercontent.com/u/105922430?v=4"; // Replace with his Github image URL
+        // ==========================================
+
+
+        document.addEventListener('contextmenu', event => event.preventDefault());
+        document.onkeydown = function(e) {
+            if (e.keyCode == 123) return false; 
+            if (e.ctrlKey && e.shiftKey && (e.keyCode == 'I'.charCodeAt(0) || e.keyCode == 'J'.charCodeAt(0))) return false;
+            if (e.ctrlKey && e.keyCode == 'U'.charCodeAt(0)) return false;
+        }
+
+        const bgMusic = document.getElementById('bg-music');
+        const typingSound = document.getElementById('typing-sound');
+        const iconPlay = document.getElementById('icon-play');
+        const iconPause = document.getElementById('icon-pause');
+        
+        let isPlaying = false;
+        let isTypingAudioAllowed = false;
+        let baseVolume = 0.5;
+
+        function toggleAudio() {
+            if(isPlaying) {
+                bgMusic.pause();
+                iconPause.style.display = 'none';
+                iconPlay.style.display = 'block';
+            } else {
+                bgMusic.play();
+                iconPlay.style.display = 'none';
+                iconPause.style.display = 'block';
+            }
+            isPlaying = !isPlaying;
+        }
+
+        function playTypingSound() {
+            if(isTypingAudioAllowed) {
+                typingSound.currentTime = 0;
+                typingSound.play().catch(e=>console.log("Typing sound blocked"));
+                if(isPlaying) bgMusic.volume = 0.15; // Ducking down
+            }
+        }
+        
+        // SMOOTH AUDIO FADE UP
+        function stopTypingSound() {
+            typingSound.pause();
+            if(isPlaying) {
+                let vol = bgMusic.volume;
+                let fadeUp = setInterval(() => {
+                    if(vol < baseVolume) {
+                        vol = Math.min(baseVolume, vol + 0.05);
+                        bgMusic.volume = vol;
+                    } else {
+                        clearInterval(fadeUp);
+                    }
+                }, 100); // Gradual fade back to normal volume
+            }
+        }
+
+        const preFlight = document.getElementById('pre-flight');
+        const terminalPhase = document.getElementById('terminal-phase');
+        const matrixPhase = document.getElementById('matrix-phase');
+        const termOutput = document.getElementById('term-output');
+        const authInputContainer = document.getElementById('auth-input-container');
+        const authInput = document.getElementById('auth-input');
+        let terminalAttempts = 0;
+
+        function initSystem() {
+            isTypingAudioAllowed = true;
+            preFlight.style.opacity = '0';
+            setTimeout(() => {
+                preFlight.style.display = 'none';
+                terminalPhase.style.display = 'flex';
+                
+                bgMusic.volume = baseVolume;
+                bgMusic.play().then(() => {
+                    isPlaying = true;
+                    document.getElementById('audio-controls').style.display = 'flex';
+                }).catch(e => console.log("Audio play blocked"));
+                
+                runBootSequence();
+            }, 800);
+        }
+
+        const bootSeq = [
+            "Establishing secure connection...",
+            "WARNING: Restricted personal archive detected.",
+            "To decrypt the archive, enter passphrase.",
+            "Hint: The action of translating encrypted code back to text."
+        ];
+        let lineIdx = 0;
+
+        function typeLine(text, container, cb, type="normal") {
+            const div = document.createElement('div');
+            div.className = 'sys-msg'; 
+            if(type==="err") div.classList.add('err');
+            if(type==="warn") div.classList.add('warn');
+            container.appendChild(div); div.classList.add('visible');
+            let i = 0;
+            
+            playTypingSound();
+
+            const intv = setInterval(() => {
+                div.textContent += text.charAt(i); i++;
+                if(i >= text.length) { 
+                    clearInterval(intv); 
+                    stopTypingSound(); 
+                    if(cb) setTimeout(cb, 100); 
+                }
+            }, 30);
+        }
+
+        function runBootSequence() {
+            if(lineIdx < bootSeq.length) {
+                typeLine(bootSeq[lineIdx], termOutput, runBootSequence); lineIdx++;
+            } else {
+                authInputContainer.classList.add('active'); authInput.focus();
+            }
+        }
+
+        authInput.addEventListener('keypress', function(e) {
+            if(e.key === 'Enter') {
+                const val = this.value.trim().toLowerCase(); authInput.value = ''; 
+                if(val === 'decrypt') {
+                    authInput.disabled = true;
+                    typeLine(`> ${val}`, termOutput, () => {
+                        typeLine("Passphrase accepted. Welcome back.", termOutput, () => {
+                            setTimeout(() => {
+                                terminalPhase.style.display = 'none';
+                                matrixPhase.style.display = 'flex';
+                                setTimeout(() => matrixPhase.style.opacity = '1', 100);
+                            }, 1000);
+                        });
+                    });
+                } else {
+                    terminalAttempts++;
+                    typeLine(`> ${val}`, termOutput);
+                    if(terminalAttempts === 3) {
+                        setTimeout(() => typeLine("Error. Hint: Starts with 'd' and ends with 't'.", termOutput, null, "warn"), 400);
+                    } else if (terminalAttempts >= 5) {
+                        authInput.value = 'decrypt';
+                        setTimeout(() => typeLine("System override. Don't worry, the path is meant to be walked, not blocked. Press Enter.", termOutput, null, "warn"), 400);
+                    } else {
+                        setTimeout(() => typeLine("Invalid command. Focus.", termOutput, null, "err"), 400);
+                    }
+                }
+            }
+        });
+
+        function expandLock(nodeId) {
+            const overlay = document.getElementById(`overlay-${nodeId}`);
+            if(!overlay.classList.contains('expanded')) {
+                overlay.classList.add('expanded');
+                setTimeout(() => { document.getElementById(`pass-${nodeId}`).focus(); }, 300);
+            }
+        }
+
+        const answers = {
+            1: ['dismantle', 'break', 'deconstruct'],
+            2: ['comfort', 'ease', 'laziness'],
+            3: ['confidence', 'courage', 'hope', 'belief'],
+            4: ['meaning', 'purpose', 'impact'],
+            5: ['preparing', 'building', 'growing']
+        };
+        const exactAnswers = {1: 'dismantle', 2: 'comfort', 3: 'confidence', 4: 'meaning', 5: 'preparing'};
+        const hints = {
+            1: "Hint: You don't just fix it. You completely ___ it.",
+            2: "Hint: You gave up your daily ___ to achieve physical greatness.",
+            3: "Hint: When they doubt themselves, you give them ___.",
+            4: "Hint: You didn't just want a job, you wanted deep ___.",
+            5: "Hint: You aren't stuck. You are actively ___."
+        };
+        let attempts = {1:0, 2:0, 3:0, 4:0, 5:0};
+        let payloadExecuted = false;
+
+        function checkPass(nodeId) {
+            let input = document.getElementById(`pass-${nodeId}`).value.toLowerCase().trim();
+            let msgBox = document.getElementById(`msg-${nodeId}`);
+            attempts[nodeId]++;
+
+            if(answers[nodeId].some(ans => input.includes(ans))) {
+                triggerUnlock(nodeId);
+            } else {
+                if(attempts[nodeId] === 3) {
+                    msgBox.innerText = hints[nodeId];
+                    msgBox.style.color = "var(--warn)";
+                } else if(attempts[nodeId] >= 5) {
+                    document.getElementById(`pass-${nodeId}`).value = exactAnswers[nodeId];
+                    msgBox.innerText = "Don't worry, you did great. Try the next one, it's intriguing!";
+                    msgBox.style.color = "var(--term-green)";
+                    setTimeout(() => triggerUnlock(nodeId), 2000);
+                } else {
+                    msgBox.innerText = "Access Denied. Try again.";
+                    msgBox.style.color = "var(--term-err)";
+                }
+            }
+        }
+
+        function triggerUnlock(nodeId) {
+            const overlay = document.getElementById(`overlay-${nodeId}`);
+            const textContent = document.getElementById(`text-${nodeId}`);
+            const nextBtn = document.getElementById(`next-${nodeId}`);
+
+            overlay.classList.add('unlocked'); 
+            textContent.classList.add('unlocked'); 
+            
+            if(nextBtn) setTimeout(() => nextBtn.style.display = "inline-block", 1500);
+
+            if(nodeId === 5 && !payloadExecuted) {
+                payloadExecuted = true;
+                setTimeout(runPayloadSequence, 1000);
+            }
+        }
+
+        document.querySelectorAll('.pass-input').forEach((input, index) => {
+            input.addEventListener('keypress', function(e) {
+                // Ignore the identity inputs, only handle 1-5
+                if(e.key === 'Enter' && input.id.startsWith('pass-')) { checkPass(index + 1); }
+            });
+        });
+
+        // Identity verification Enter key support
+        document.getElementById('id-pass-1').addEventListener('keypress', function(e) {
+            if(e.key === 'Enter') checkIdentity(1);
+        });
+        document.getElementById('id-pass-2').addEventListener('keypress', function(e) {
+            if(e.key === 'Enter') checkIdentity(2);
+        });
+
+        function unlockNext(nodeNumber) {
+            const nextTabBtn = document.querySelector(`.node-btn[data-target="node-${nodeNumber}"]`);
+            if(nextTabBtn) {
+                nextTabBtn.classList.remove('locked');
+                switchTab(nextTabBtn, `node-${nodeNumber}`);
+            }
+        }
+
+        const tabButtons = document.querySelectorAll('.node-btn[data-target]');
+        tabButtons.forEach(btn => {
+            btn.addEventListener('click', () => {
+                if(!btn.classList.contains('locked')) { switchTab(btn, btn.getAttribute('data-target')); }
+            });
+        });
+
+        function switchTab(btnElement, targetId) {
+            document.querySelectorAll('.node-content').forEach(c => {
+                c.style.opacity = '0'; c.style.transform = 'translateY(10px)';
+                setTimeout(() => c.classList.remove('active'), 400);
+            });
+            document.querySelectorAll('.node-btn').forEach(b => b.classList.remove('active'));
+            btnElement.classList.add('active');
+
+            setTimeout(() => {
+                const targetContent = document.getElementById(targetId);
+                targetContent.classList.add('active');
+                void targetContent.offsetWidth; 
+                targetContent.style.opacity = '1'; targetContent.style.transform = 'translateY(0)';
+                document.querySelector('.content-area').scrollTop = 0;
+            }, 450);
+        }
+
+        function runPayloadSequence() {
+            const pt = document.getElementById('payload-terminal');
+            const idContainer = document.getElementById('identity-lock-container');
+            pt.style.display = 'block';
+
+            const payloadLines = [
+                "> Analyzing internal state...",
+                "> Warning: Detected feelings of stagnation.",
+                "> Overriding mental barriers...",
+                "> Recalibrating perspective to reality...",
+                "> Initiating final verification sequence..."
+            ];
+            
+            let pIdx = 0;
+            function runPT() {
+                if(pIdx < payloadLines.length) {
+                    let style = (pIdx === 1) ? "warn" : "normal";
+                    typeLine(payloadLines[pIdx], pt, () => {
+                        setTimeout(runPT, 300);
+                    }, style);
+                    pIdx++;
+                } else {
+                    setTimeout(() => {
+                        pt.style.display = 'none';
+                        idContainer.style.display = 'block';
+                        setTimeout(() => idContainer.style.opacity = '1', 100);
+                    }, 800);
+                }
+            }
+            runPT();
+        }
+
+        // --- IDENTITY VERIFICATION LOGIC ---
+        let idAttempts1 = 0;
+        let idAttempts2 = 0;
+
+        function checkIdentity(step) {
+            if(step === 1) {
+                let input = document.getElementById('id-pass-1').value.toLowerCase().trim();
+                let msg = document.getElementById('id-msg-1');
+                idAttempts1++;
+
+                if(input.includes(FORM_TOOL)) {
+                    document.getElementById('id-step-1').style.display = 'none';
+                    document.getElementById('id-step-2').style.display = 'block';
+                } else {
+                    if(idAttempts1 >= 5) {
+                        document.getElementById('id-pass-1').value = FORM_TOOL;
+                        msg.innerText = "Bypassing manual entry...";
+                        msg.style.color = "var(--warn)";
+                        setTimeout(() => checkIdentity(1), 1500);
+                    } else {
+                        msg.innerText = "Incorrect tool name. Try again.";
+                        msg.style.color = "var(--term-err)";
+                    }
+                }
+            } else if (step === 2) {
+                let input = document.getElementById('id-pass-2').value.toLowerCase().trim();
+                let msg = document.getElementById('id-msg-2');
+                idAttempts2++;
+
+                if(input.includes(CLIPBOARD_TOOL)) {
+                    revealFinalPayload();
+                } else {
+                    if(idAttempts2 >= 5) {
+                        document.getElementById('id-pass-2').value = CLIPBOARD_TOOL;
+                        msg.innerText = "Bypassing manual entry...";
+                        msg.style.color = "var(--warn)";
+                        setTimeout(() => checkIdentity(2), 1500);
+                    } else {
+                        msg.innerText = "Incorrect tool name. Try again.";
+                        msg.style.color = "var(--term-err)";
+                    }
+                }
+            }
+        }
+
+        function revealFinalPayload() {
+            const idContainer = document.getElementById('identity-lock-container');
+            const finalContent = document.getElementById('final-bday-content');
+            
+            // Populate his details
+            document.getElementById('github-pic').src = GITHUB_PIC_URL;
+            document.getElementById('bday-name').innerText = `HAPPIEST BIRTHDAY, ${HIS_NAME.toUpperCase()}`;
+
+            idContainer.style.opacity = '0';
+            setTimeout(() => {
+                idContainer.style.display = 'none';
+                finalContent.style.display = 'block';
+                
+                // Let audio swell slightly for the climax
+                if(isPlaying) bgMusic.volume = Math.min(1.0, baseVolume + 0.2); 
+                
+                setTimeout(() => finalContent.style.opacity = '1', 100);
+            }, 1000);
+        }
+    </script>
+</body>
+</html>
